@@ -1,7 +1,5 @@
-
-
 import { GoogleGenAI, Type, FunctionDeclaration, Tool } from "@google/genai";
-import { AssetSpec, DocumentType, DetectedElement, AgentStatus, LayerStyle } from "../types";
+import { AssetSpec, DocumentType, DetectedElement, AgentStatus, LayerStyle, FieldCategory } from "../types";
 import { allTools } from "./toolDefinitions";
 
 // Helper to get a fresh client instance (ensures we use the latest selected API KEY)
@@ -42,6 +40,37 @@ export const createRootChat = () => {
       tools: rootTools
     }
   });
+};
+
+/**
+ * TRANSLATION SERVICE
+ * Uses Gemini to translate help content on the fly.
+ */
+export const translateText = async (text: string, targetLanguage: string): Promise<string> => {
+    try {
+        const response = await getAi().models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: `
+                TASK: TRANSLATE_MANUAL.
+                TARGET_LANGUAGE: ${targetLanguage}.
+                
+                CONTENT:
+                """
+                ${text}
+                """
+                
+                INSTRUCTIONS:
+                1. Translate the above content into ${targetLanguage}.
+                2. Maintain all formatting, line breaks, and styling cues.
+                3. Keep technical terms like "ForgeryForge", "Agent Omega", "Root Terminal" in English or their proper localized technical equivalents.
+                4. Output ONLY the translated text.
+            `
+        });
+        return response.text || text;
+    } catch (e) {
+        console.warn("Translation failed", e);
+        return text;
+    }
 };
 
 /**
@@ -111,32 +140,40 @@ export const generateCleanPlate = async (base64Image: string): Promise<string> =
 };
 
 /**
- * AGENT SIGMA: ID FIELD MAPPING
- * Specifically locates ID fields for auto-layer population.
+ * AGENT SIGMA: ID FIELD MAPPING v2 (Smart Segmentation)
+ * Segregates fields into Variable (Green) and Static (Red) categories.
  */
 export const detectIdFields = async (base64Image: string): Promise<DetectedElement[]> => {
     const { mimeType, data } = processBase64(base64Image);
 
     const prompt = `
-        TASK: ID_CARD_LAYOUT_MAPPING.
-        Identify the bounding boxes for the DATA VALUES of these fields (NOT the labels):
+        TASK: ID_CARD_ANATOMY_MAPPING.
+        Analyze the ID card image and create a structured map of all text and visual elements.
         
-        1. "portrait_photo" (The main photo)
-        2. "surname" (Last Name)
-        3. "given_name" (First Name)
-        4. "dob" (Date of Birth)
-        5. "exp_date" (Expiration)
-        6. "address" (Full Address)
-        7. "sex" (Gender)
-        8. "height"
-        9. "eyes"
-        10. "hair"
-        11. "signature"
+        CLASSIFICATION RULES:
+        1. **VARIABLE**: Personal information that is specific to the cardholder and changes per card.
+           - Examples: Name, Address, DOB, EXP Date, DL Number, Sex, Height, Eyes, Signature, Portrait Photo.
+        2. **STATIC**: Boilerplate text, headers, government titles, and legal notices that are the same on every card of this type.
+           - Examples: "DRIVER LICENSE", State Name (e.g., "CALIFORNIA"), Field Labels ("DOB:", "EXP:", "FN", "LN"), "USA", Copyright text, Warnings, Background Security Text.
+        3. **PHOTO**: The main headshot and any ghost images.
+        4. **BARCODE**: The large PDF417 barcode (usually on back) or smaller code 128/39 barcodes.
+
+        INSTRUCTIONS:
+        - Identify discrete bounding boxes for all visible text and photos.
+        - Be EXTREMELY precise with bounding boxes.
+        - Map "Ghost Images" (small transparent duplicates of face) as distinct elements if visible.
+        - Detect any Barcodes (PDF417).
         
-        OUTPUT JSON:
-        [{ "id": "surname", "label": "Surname", "value": "CURRENT_TEXT", "box_2d": [ymin, xmin, ymax, xmax] }, ...]
+        OUTPUT JSON SCHEMA:
+        [{ 
+           "id": "snake_case_id", 
+           "label": "Human Readable Label", 
+           "value": "Extracted Text Content", 
+           "box_2d": [ymin, xmin, ymax, xmax], 
+           "category": "VARIABLE" | "STATIC" | "PHOTO" | "BARCODE"
+        }, ...]
         
-        Scale 0-1000. Be precise.
+        Scale 0-1000.
     `;
 
     try {
@@ -158,7 +195,8 @@ export const detectIdFields = async (base64Image: string): Promise<DetectedEleme
                             id: { type: Type.STRING },
                             label: { type: Type.STRING },
                             value: { type: Type.STRING },
-                            box_2d: { type: Type.ARRAY, items: { type: Type.INTEGER } }
+                            box_2d: { type: Type.ARRAY, items: { type: Type.INTEGER } },
+                            category: { type: Type.STRING, enum: ["VARIABLE", "STATIC", "PHOTO", "BARCODE"] }
                         }
                     }
                 }
@@ -171,6 +209,89 @@ export const detectIdFields = async (base64Image: string): Promise<DetectedEleme
     } catch (e) {
         console.warn("ID Field Detect Failed", e);
         return [];
+    }
+};
+
+/**
+ * AGENT GAMMA: HEADSHOT SYNTHESIS (GOD MODE)
+ * Replaces ID photos with AAMVA-compliant, perfectly blended fabrications.
+ */
+export const synthesizeHeadshot = async (
+    originalDocBase64: string, 
+    newUserPhotoBase64: string,
+    isGhostImage: boolean = false
+): Promise<string> => {
+    const { mimeType: docMime, data: docData } = processBase64(originalDocBase64);
+    const { mimeType: userMime, data: userData } = processBase64(newUserPhotoBase64);
+
+    // 1. ANALYZE PHASE: Extract Style Matrix from Original
+    const analysisPrompt = `
+        IDENTITY: MASTER_FORGER // AGENT GAMMA.
+        TASK: Analyze the "Style Matrix" of the ID card portrait in this document.
+        
+        EXTRACT:
+        1. **Lighting:** Direction, intensity, hardness (flash vs studio).
+        2. **Texture:** Printer dot pitch, thermal transfer ribbon artifacts, lamination gloss.
+        3. **Color Grading:** Tint (often blueish or reddish on IDs), saturation levels.
+        4. **OVD/Security:** Are there holograms (keys, state seals) overlaying the face? 
+        5. **Pose/Expression:** AAMVA standard (neutral, forward-facing).
+        
+        OUTPUT: A dense, technical prompt description of these attributes.
+    `;
+
+    // 2. SYNTHESIS PHASE: Fuse User Photo with Style Matrix
+    const synthesisPrompt = `
+        TASK: HEADSHOT_REPLACEMENT.
+        
+        INPUTS:
+        1. Reference Style: [Derived from analysis of original ID].
+        2. Subject: [User provided photo].
+        
+        EXECUTION PROTOCOL (AAMVA COMPLIANCE):
+        1. **Pose Correction:** Force the subject into a perfect AAMVA compliant mugshot pose (straight on, neutral expression, eyes open).
+        2. **Style Transfer:** Apply the EXACT lighting, grain, printer artifacts, and color grading of the original ID card style to the subject. It must look like it was printed ON PLASTIC using a dye-sublimation printer.
+        3. **Integration:** 
+           - Remove the subject's original background. 
+           - Replace with the standard ID background (usually light blue or grey).
+           - Apply any detected "Hologram/OVD" overlays across the face as if they are on the lamination layer on top.
+           ${isGhostImage ? '- **GHOST MODE**: Make the image semi-transparent, monochrome (or UV styled), and multiply-blended as a secondary security feature.' : ''}
+        
+        OUTPUT:
+        Return ONLY the processed headshot image (cropped), ready to be pasted onto the card.
+    `;
+
+    try {
+        const response = await getAi().models.generateContent({
+            model: 'gemini-3-pro-image-preview', // Using the best model for photorealism
+            contents: {
+                parts: [
+                    { text: synthesisPrompt },
+                    { inlineData: { mimeType: docMime, data: docData } }, // Context: Original ID
+                    { inlineData: { mimeType: userMime, data: userData } } // Context: New User Photo
+                ]
+            },
+            config: {
+                imageConfig: {
+                    aspectRatio: "1:1",
+                    imageSize: "1K"
+                }
+            }
+        });
+
+        const candidates = response.candidates;
+        if (candidates && candidates.length > 0) {
+            const parts = candidates[0].content.parts;
+            for (const part of parts) {
+                if (part.inlineData && part.inlineData.data) {
+                    return `data:image/png;base64,${part.inlineData.data}`;
+                }
+            }
+        }
+        throw new Error("Headshot synthesis failed.");
+
+    } catch (e) {
+        console.error("Headshot Synth Error", e);
+        throw e;
     }
 };
 
@@ -336,36 +457,40 @@ export const findAndFabricateTemplate = async (
 };
 
 /**
- * AGENT ZETA: STYLIST
- * Mission: Auto-detect font properties from the image to perfectly match inserted text.
+ * AGENT ZETA: STYLIST V2 (Advanced Blending)
+ * Mission: Auto-detect font properties AND background texture/masking to seamlessly blend edits.
  */
 export const predictTextStyle = async (base64Image: string, textToInsert: string): Promise<LayerStyle> => {
     const { mimeType, data } = processBase64(base64Image);
 
     const systemPrompt = `
-        IDENTITY: AGENT ZETA // TYPOGRAPHY FORENSICS.
-        TASK: Analyze the document image and determine the best style settings to seamlessly insert the new text: "${textToInsert}".
-        If "${textToInsert}" exists in the image, analyze its exact style. If not, analyze the surrounding body text.
+        IDENTITY: AGENT ZETA // TYPOGRAPHY & TEXTURE FORENSICS.
+        TASK: Analyze the document image to create a "Perfect Match" edit for inserting the text: "${textToInsert}".
         
-        INSTRUCTION:
-        1. Scan the document for the dominant body font or the font used in form fields.
-        2. Detect the exact Hex Color used for text (usually #000000, #333333, or specific dark blues).
-        3. Estimate the Font Size (in pixels, assuming a standard screen resolution).
-        4. Identify the Font Family (Courier New, Arial, Times New Roman, Verdana, Georgia, Trebuchet MS).
-        5. Check for any document rotation/skew.
-        6. **BACKGROUND DETECTION**: Identify the background color directly behind this text (to be used as a mask). If it's complex/patterned, return the dominant average color.
+        CRITICAL ANALYSIS PROTOCOL:
+        1. **BACKGROUND MATCHING (Masking)**: Look at the exact pixels BEHIND the text in the similar area. What color is the paper? 
+           - If it's white paper, is it pure #FFFFFF or scanned gray #F0F0F0? 
+           - **Return this as 'backgroundColor'**. This will be used to hide the old text.
+        2. **GRAIN & NOISE**: How grainy is the image? 
+           - Return 'noise' (0-100). 0 is vector clean, 20 is a bad photocopy, 50 is distinct noise.
+        3. **SOFTNESS (Blur)**: Is the text sharp or soft?
+           - Return 'blur' (0-10). 0 is sharp, 1-2 is standard scan softness.
+        4. **TYPOGRAPHY**: Match Font Family, Weight, Color exactly.
+           - 'color': If the text is black but the scan is faded, use the actual dark gray hex (e.g., #222222).
         
         OUTPUT SCHEMA (JSON):
         {
             "fontFamily": "string",
-            "fontSize": number, // integer 8-72
+            "fontSize": number, 
             "fontWeight": "string", // "normal" or "bold"
             "color": "string", // hex
-            "backgroundColor": "string", // hex (paper color)
-            "letterSpacing": number, // usually 0 or 1
-            "opacity": number, // 0.5 to 1.0 (to match scan quality)
+            "backgroundColor": "string", // hex (paper color for masking)
+            "letterSpacing": number, 
+            "opacity": number, // 0.1 to 1.0
             "rotation": number, // -180 to 180
-            "textAlign": "left" | "center" | "right"
+            "textAlign": "left" | "center" | "right",
+            "blur": number, // 0-10
+            "noise": number // 0-100
         }
     `;
 
@@ -391,9 +516,11 @@ export const predictTextStyle = async (base64Image: string, textToInsert: string
                         letterSpacing: { type: Type.NUMBER },
                         opacity: { type: Type.NUMBER },
                         rotation: { type: Type.NUMBER },
-                        textAlign: { type: Type.STRING }
+                        textAlign: { type: Type.STRING },
+                        blur: { type: Type.NUMBER },
+                        noise: { type: Type.NUMBER }
                     },
-                    required: ["fontFamily", "fontSize", "fontWeight", "color", "letterSpacing", "opacity", "rotation", "textAlign"]
+                    required: ["fontFamily", "fontSize", "fontWeight", "color", "backgroundColor", "letterSpacing", "opacity", "rotation", "textAlign", "blur", "noise"]
                 }
             }
         });
@@ -414,7 +541,9 @@ export const predictTextStyle = async (base64Image: string, textToInsert: string
             letterSpacing: 0,
             opacity: 0.9,
             rotation: 0,
-            textAlign: 'left'
+            textAlign: 'left',
+            blur: 0,
+            noise: 0
         };
     }
 };
@@ -457,20 +586,20 @@ export const getSearchContext = async (userPrompt: string): Promise<string> => {
 };
 
 /**
- * AGENT SIGMA: RECONNAISSANCE (SPATIAL)
+ * AGENT SIGMA: RECONNAISSANCE (SPATIAL V2)
  * Mission: Create a digital twin of the target document for layer emulation.
+ * UPGRADE: Higher precision bounding box requests.
  */
 export const extractDocumentData = async (base64Image: string, docType: DocumentType): Promise<DetectedElement[]> => {
   const { mimeType, data } = processBase64(base64Image);
   
-  let specificDirectives = "";
   if (docType === DocumentType.ID_CARD) {
-    specificDirectives = `
-      TARGET: ID CARD / CREDENTIAL.
-      Identify: "Surname", "Given Name", "DOB", "EXP", "DL_NUM", "Address", "Sex", "Hgt", "Eyes".
-      Also identify "Portrait_Photo" and "Signature" as elements.
-    `;
-  } else if (docType === DocumentType.FINANCIAL) {
+      // Route to specialized ID detector if type matches
+      return detectIdFields(base64Image);
+  }
+
+  let specificDirectives = "";
+  if (docType === DocumentType.FINANCIAL) {
     specificDirectives = `
       TARGET: FINANCIAL DOCUMENT.
       Identify: "Payee", "Date", "Amount_Num", "Amount_Text", "Memo", "Signature_Line", "Routing_Num", "Account_Num".
@@ -487,6 +616,12 @@ export const extractDocumentData = async (base64Image: string, docType: Document
     MISSION: Perform spatial analysis. Break the image down into editable "Layers".
     CONTEXT: ${specificDirectives}
     
+    INSTRUCTIONS:
+    1. EXTRACT discrete, editable elements.
+    2. BOUNDING BOXES ("box_2d"): Must be TIGHT around the *value* of the field, excluding the label.
+       Example: For "Name: John Doe", box_2d should only cover "John Doe".
+    3. EXCLUDE general paragraph text unless it looks like a form field.
+    
     OUTPUT SCHEMA:
     Return a JSON array of objects.
     Each object must have:
@@ -494,8 +629,7 @@ export const extractDocumentData = async (base64Image: string, docType: Document
     - label: Human Readable Label
     - value: The current text content (or "IMAGE" for visual elements)
     - box_2d: [ymin, xmin, ymax, xmax]  (Integer coordinates on 0-1000 scale)
-    
-    ACCURACY IS PARAMOUNT. The "box_2d" must tightly bound the content.
+    - category: "VARIABLE"
   `;
 
   try {
@@ -520,9 +654,10 @@ export const extractDocumentData = async (base64Image: string, docType: Document
               box_2d: { 
                 type: Type.ARRAY,
                 items: { type: Type.INTEGER }
-              }
+              },
+              category: { type: Type.STRING, enum: ["VARIABLE", "STATIC", "PHOTO", "BARCODE"] }
             },
-            required: ["id", "label", "value", "box_2d"]
+            required: ["id", "label", "value", "box_2d", "category"]
           }
         }
       }
@@ -545,8 +680,8 @@ export const extractDocumentData = async (base64Image: string, docType: Document
 };
 
 /**
- * AGENT OMEGA: QUALITY ASSURANCE
- * Mission: Ensure generated output meets high-fidelity standards.
+ * AGENT OMEGA: QUALITY ASSURANCE & RECOVERY
+ * Mission: Ensure generated output meets high-fidelity standards AND provide fixes.
  */
 export const analyzeDocument = async (base64Image: string, docType: DocumentType): Promise<string> => {
   const { mimeType, data } = processBase64(base64Image);
@@ -558,7 +693,7 @@ export const analyzeDocument = async (base64Image: string, docType: DocumentType
       CHECKLIST:
       1. **Typeface Integrity**: Verify fonts match standard jurisdiction sans-serifs. Check kerning.
       2. **Layout**: Check alignment of data fields versus portrait.
-      3. **Artifacts**: Scan for visual inconsistencies or digital residue.
+      3. **Artifacts**: Scan for visual inconsistencies, lighting mismatches, or digital residue.
     `;
   } else if (docType === DocumentType.FINANCIAL) {
     standardsProtocol = `
@@ -569,16 +704,55 @@ export const analyzeDocument = async (base64Image: string, docType: DocumentType
     `;
   }
 
+  const systemPrompt = `
+      IDENTITY: AGENT OMEGA // FORENSIC RECOVERY SPECIALIST.
+      STATUS: ACTIVE.
+      MISSION: Conduct a forensic audit AND provide a tactical recovery plan using the app's specific tools.
+      
+      PROTOCOL: ${standardsProtocol}
+      
+      APP TOOLBOX (REFERENCE THESE IN YOUR PLAN):
+      1. [ISP FILTERS] (Terminal/Console):
+         - isp_set_blur (0-20): Softens vector edges to match raster scans.
+         - isp_set_contrast (0-200): Adds "crunch" to aged docs.
+         - isp_set_grayscale (0-100): Removes saturation anomalies.
+         - isp_set_sepia (0-100): Matches aged paper tone.
+         - isp_set_noise (via Prompt): Adds grain.
+      2. [GEOMETRY]:
+         - spatial_rotate (0.1 - 5.0): Fixes "perfect alignment" artifacts.
+         - spatial_zoom/scale: Fixes sizing errors.
+      3. [LAYERS]:
+         - Opacity Slider: Blends ink into paper.
+         - Blend Modes (via Prompt): Multiply/Darken.
+      4. [GENERATIVE COMMANDS]:
+         - "Execute Composite" with prompt: "Add fold lines", "Match ISO noise", "Degrade quality".
+
+      OUTPUT FORMAT (STRICT):
+      
+      [ 🚨 FORENSIC ANALYSIS ]
+      > [ISSUE]: Describe the anomaly (e.g., "Text is too sharp vs background").
+      > [SEVERITY]: CRITICAL / MODERATE / LOW.
+      
+      [ 🛠️ TACTICAL RECOVERY PLAN ]
+      For each issue, provide a precise step-by-step fix using the tools above.
+      
+      FIX #1: [Name of Issue]
+      DIRECTIVE: [Specific instruction, e.g., "Open Terminal > Type 'isp_set_blur 0.4'"]
+      REASONING: [Why this works, e.g., "Simulates ink bleed on paper."]
+
+      FIX #2: [Name of Issue]
+      DIRECTIVE: [Instruction, e.g., "Select Text Layer > Set Opacity to 90%"]
+      
+      [ 🧠 STRATEGIC ADVICE ]
+      Psychological advice for the forger. Example: "The document is too perfect. Humans make mistakes. Rotate it 0.5 degrees to look scanned."
+  `;
+
   try {
     const response = await getAi().models.generateContent({
       model: 'gemini-3-pro-preview',
       contents: {
         parts: [
-          { text: `IDENTITY: AGENT OMEGA // QA LEAD.
-          STATUS: ACTIVE.
-          MISSION: Conduct a quality audit of the provided asset. We need perfection.
-          PROTOCOL: ${standardsProtocol}
-          TASK: Identify every flaw, artifact, and deviation from the standard. Be ruthless.` },
+          { text: systemPrompt },
           { inlineData: { mimeType: mimeType, data: data } }
         ]
       },

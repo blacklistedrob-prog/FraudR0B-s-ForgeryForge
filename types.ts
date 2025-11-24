@@ -1,5 +1,7 @@
 
 
+
+
 export enum AppStatus {
   IDLE = 'IDLE',
   UPLOADING = 'UPLOADING',
@@ -8,7 +10,10 @@ export enum AppStatus {
   PROCESSING = 'PROCESSING',
   ANALYZING = 'ANALYZING',
   SANITIZING = 'SANITIZING', // New: ID Card Cleaning
+  AUDITING = 'AUDITING', // New: Forensic Audit
   GENERATING_ASSET = 'GENERATING_ASSET',
+  PROCESSING_HEADSHOT = 'PROCESSING_HEADSHOT', // New: ID Photo Synth
+  GENERATING_BARCODE = 'GENERATING_BARCODE', // New: AAMVA PDF417
   COMPLETED = 'COMPLETED',
   ERROR = 'ERROR'
 }
@@ -21,7 +26,9 @@ export enum AgentStep {
   ANALYZING = 'ANALYZING', // Agent Alpha (Forensics)
   DESIGNING = 'DESIGNING', // Agent Beta (Logic)
   FORGING = 'FORGING',     // Agent Gamma (Render)
-  CLEANING = 'CLEANING'    // New: Sanitization
+  CLEANING = 'CLEANING',    // New: Sanitization
+  SYNTHESIZING = 'SYNTHESIZING', // New: Photo Operations
+  ENCODING = 'ENCODING' // New: Barcode Generation
 }
 
 export enum DocumentType {
@@ -37,11 +44,19 @@ export interface BoundingBox {
   xmax: number;
 }
 
+export enum FieldCategory {
+  VARIABLE = 'VARIABLE', // Green Box (User Data)
+  STATIC = 'STATIC',     // Red Box (Boilerplate/Labels)
+  PHOTO = 'PHOTO',       // Special handling
+  BARCODE = 'BARCODE'    // PDF417
+}
+
 export interface DetectedElement {
   id: string;
   label: string;
   value: string;
   box_2d: number[]; // [ymin, xmin, ymax, xmax] 0-1000 scale
+  category: FieldCategory;
 }
 
 // --- NEW: Custom Layer Support ---
@@ -55,6 +70,9 @@ export interface LayerStyle {
   opacity: number;
   rotation: number;
   textAlign: 'left' | 'center' | 'right';
+  // New Blending Props
+  blur: number; // 0-10px to match scan softness
+  noise: number; // 0-100 intensity of grain
 }
 
 export interface CustomLayer {
@@ -67,6 +85,7 @@ export interface CustomLayer {
   height: number; // Percentage 0-100 (auto for text)
   style: LayerStyle;
   label?: string; // Metadata for UI
+  category?: FieldCategory;
 }
 
 export interface DocumentState {
@@ -159,4 +178,73 @@ export interface AgentStatus {
     hunter: 'idle' | 'scanning' | 'locked' | 'failed';
     architect: 'idle' | 'designing' | 'complete';
     forge: 'idle' | 'rendering' | 'complete';
+}
+
+export enum ThemeColor {
+  GREEN = 'GREEN',
+  AMBER = 'AMBER',
+  CYAN = 'CYAN',
+  RED = 'RED'
+}
+
+export enum AppLanguage {
+  EN = 'English',
+  ES = 'Español',
+  FR = 'Français',
+  DE = 'Deutsch',
+  IT = 'Italiano',
+  PT = 'Português',
+  RU = 'Русский',
+  ZH = '中文',
+  JA = '日本語',
+  KO = '한국어'
+}
+
+export interface AppSettings {
+  // Core
+  autoSaveLocal: boolean; // 2.5 min interval
+  historyLimit: number; // Undos allowed (Save storage)
+  enableShortcuts: boolean;
+  enableTerminalAutocomplete: boolean;
+  showFraudKitAd: boolean;
+  language: AppLanguage;
+  
+  // Output
+  defaultExportFormat: ExportFormat;
+  defaultDpiQuality: '300' | '600' | '1200';
+  
+  // Visuals / UI
+  themeColor: ThemeColor;
+  audioVolume: number; // 0-100
+  reduceMotion: boolean;
+  highContrast: boolean;
+  gridOpacity: number; // 0-100
+  crtFlickerIntensity: 'LOW' | 'MED' | 'HIGH';
+  
+  // Workflow
+  autoRunAudit: boolean;
+  privacyBlurIdle: boolean;
+  debugLogs: boolean;
+}
+
+// --- NEW: AAMVA Barcode Fields ---
+export interface AAMVAFields {
+  firstName: string; // DAC
+  lastName: string;  // DCS
+  middleName?: string; // DAD
+  address: string;   // DAG
+  city: string;      // DAI
+  state: string;     // DAJ
+  zipCode: string;   // DAK
+  dlNumber: string;  // DAQ
+  issueDate: string; // DBD (YYYYMMDD)
+  expDate: string;   // DBA (YYYYMMDD)
+  dob: string;       // DBB (YYYYMMDD)
+  sex: string;       // DBC (1=M, 2=F)
+  height: string;    // DAU (inches) or HGT
+  weight: string;    // DAW (lbs)
+  eyes: string;      // DAY (BLK, BLU, BRO, GRY, GRN, HAZ, MAR, PNK, DIC)
+  hair: string;      // DAZ (BAL, BLK, BLN, BRO, GRY, RED, SDY, WHI)
+  discriminator: string; // DD (Document Discriminator)
+  iin: string;       // Issuer Identification Number (Default 636020)
 }

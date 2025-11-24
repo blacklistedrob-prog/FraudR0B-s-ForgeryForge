@@ -1,5 +1,7 @@
+
+
 import React, { useState } from 'react';
-import { DetectedElement } from '../types';
+import { DetectedElement, FieldCategory } from '../types';
 
 interface LayerHudProps {
   elements: DetectedElement[];
@@ -26,6 +28,22 @@ export const LayerHud: React.FC<LayerHudProps> = ({ elements, onSelectElement, s
     };
   };
 
+  const getBorderColor = (category: FieldCategory, isSelected: boolean) => {
+      if (isSelected) return 'border-white';
+      if (category === FieldCategory.VARIABLE) return 'border-green-500';
+      if (category === FieldCategory.STATIC) return 'border-red-600';
+      if (category === FieldCategory.PHOTO) return 'border-cyan-400';
+      return 'border-gray-500';
+  };
+
+  const getBgColor = (category: FieldCategory, isSelected: boolean) => {
+      if (isSelected) return 'bg-white/20';
+      if (category === FieldCategory.VARIABLE) return 'bg-green-500/10';
+      if (category === FieldCategory.STATIC) return 'bg-red-600/5';
+      if (category === FieldCategory.PHOTO) return 'bg-cyan-400/10';
+      return 'bg-gray-500/10';
+  };
+
   return (
     <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
       {/* Grid Overlay Effect */}
@@ -35,38 +53,59 @@ export const LayerHud: React.FC<LayerHudProps> = ({ elements, onSelectElement, s
         const isSelected = selectedElementId === el.id;
         const isHovered = hoveredId === el.id;
         const style = getStyle(el.box_2d);
+        const borderColor = getBorderColor(el.category, isSelected);
+        const bgColor = getBgColor(el.category, isSelected);
         
+        // Z-Index: Variable > Static so Green boxes overlay Red ones
+        const zIndex = el.category === FieldCategory.VARIABLE ? 30 : 20;
+
         return (
           <div
             key={el.id}
-            style={style}
+            style={{...style, zIndex: isSelected ? 50 : zIndex}}
             onMouseEnter={() => setHoveredId(el.id)}
             onMouseLeave={() => setHoveredId(null)}
             onClick={(e) => {
-              e.stopPropagation(); // Prevent bubbling if needed
-              onSelectElement(el);
+              e.stopPropagation();
+              // Green (Variable) & Photo: Single Click
+              if (el.category === FieldCategory.VARIABLE || el.category === FieldCategory.PHOTO) {
+                  onSelectElement(el);
+              }
+            }}
+            onDoubleClick={(e) => {
+               e.stopPropagation();
+               // Red (Static): Double Click
+               if (el.category === FieldCategory.STATIC) {
+                   onSelectElement(el);
+               }
             }}
             className={`
               absolute border-2 transition-all duration-200 cursor-pointer pointer-events-auto
               flex items-start justify-start
-              ${isSelected ? 'border-green-400 bg-green-900/30 z-30 shadow-[0_0_15px_rgba(34,197,94,0.5)]' : 'border-green-900/40 hover:border-green-500/80 hover:bg-green-500/10 z-20'}
+              ${borderColor} ${isHovered ? bgColor : 'bg-transparent'}
+              ${isSelected ? 'shadow-[0_0_15px_rgba(255,255,255,0.5)]' : ''}
             `}
           >
             {/* Corner Markers */}
-            <div className={`absolute -top-1 -left-1 w-2 h-2 border-t border-l ${isSelected ? 'border-green-400' : 'border-green-700'}`}></div>
-            <div className={`absolute -top-1 -right-1 w-2 h-2 border-t border-r ${isSelected ? 'border-green-400' : 'border-green-700'}`}></div>
-            <div className={`absolute -bottom-1 -left-1 w-2 h-2 border-b border-l ${isSelected ? 'border-green-400' : 'border-green-700'}`}></div>
-            <div className={`absolute -bottom-1 -right-1 w-2 h-2 border-b border-r ${isSelected ? 'border-green-400' : 'border-green-700'}`}></div>
+            <div className={`absolute -top-1 -left-1 w-2 h-2 border-t border-l ${borderColor}`}></div>
+            <div className={`absolute -top-1 -right-1 w-2 h-2 border-t border-r ${borderColor}`}></div>
+            <div className={`absolute -bottom-1 -left-1 w-2 h-2 border-b border-l ${borderColor}`}></div>
+            <div className={`absolute -bottom-1 -right-1 w-2 h-2 border-b border-r ${borderColor}`}></div>
 
             {/* Label Tag */}
             {(isHovered || isSelected) && (
               <div className={`
                 absolute -top-6 left-0 whitespace-nowrap px-2 py-0.5 text-[10px] font-mono font-bold uppercase tracking-widest
                 backdrop-blur-md border
-                ${isSelected ? 'bg-green-500 text-black border-green-400' : 'bg-black/80 text-green-400 border-green-700'}
+                ${isSelected ? 'bg-white text-black border-white' : 'bg-black/90 border-current'}
+                ${el.category === FieldCategory.VARIABLE ? 'text-green-400 border-green-500' : ''}
+                ${el.category === FieldCategory.STATIC ? 'text-red-500 border-red-500' : ''}
+                ${el.category === FieldCategory.PHOTO ? 'text-cyan-400 border-cyan-500' : ''}
               `}>
                 {el.label} 
-                <span className="opacity-60 ml-2 font-normal lowercase">id:{el.id}</span>
+                <span className="opacity-60 ml-2 font-normal lowercase">
+                    {el.category === FieldCategory.STATIC ? '(Double-Click)' : ''}
+                </span>
               </div>
             )}
             
